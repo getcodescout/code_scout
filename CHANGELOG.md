@@ -16,7 +16,7 @@ refuses to publish when the two disagree.
 The Flutter SDK has its own changelog, in
 [code_scout_flutter](https://github.com/getcodescout/code_scout_flutter).
 
-## [1.2.0] - 2026-10-05
+## [1.2.0] - 2026-10-06
 
 When a response body stops matching the app's model, the failure can now be
 read beside the call that returned it.
