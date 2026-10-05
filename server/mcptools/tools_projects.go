@@ -73,7 +73,7 @@ type tagCountsOut struct {
 }
 
 func (d Deps) addProjectTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "list_projects",
 		Description: "List the projects this token's user can see, newest first. " +
 			"Every other tool takes one of these ids as project_id.",
@@ -102,7 +102,7 @@ func (d Deps) addProjectTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_project_overview",
 		Description: "Counts and an activity chart for one project over a window: logs, errors, " +
 			"network calls, sessions, the previous period for comparison, and the bucket where " +
@@ -146,7 +146,7 @@ func (d Deps) addProjectTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_tag_counts",
 		Description: "The tags in use on a project's logs and how often each occurs. " +
 			"Useful before search_logs, whose tag: operator takes these values.",

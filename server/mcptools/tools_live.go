@@ -94,7 +94,7 @@ type tailLiveSessionOut struct {
 }
 
 func (d Deps) addLiveTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "list_live_sessions",
 		Description: "Devices streaming to this project right now. A live session is a phone with " +
 			"the app open, paired to the dashboard; its logs arrive in real time and nothing is " +
@@ -127,7 +127,7 @@ func (d Deps) addLiveTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "tail_live_session",
 		Description: "Read a live session's recent events: the last 512 logs the device streamed, " +
 			"oldest first. One-shot, not a stream — call again with after_seq set to the previous " +

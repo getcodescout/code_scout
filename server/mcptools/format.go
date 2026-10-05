@@ -1,6 +1,7 @@
 package mcptools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,7 +18,7 @@ import (
 // Budgets for list contexts. A single log can legally carry a 32 KB body in
 // its metadata, and fifty of those in one tool result would drown the very
 // context window the tool exists to inform. Lists omit or truncate with a
-// flag; get_log and get_network_request return everything.
+// flag; get_log returns a log whole, and get_network_request a call's phases.
 const (
 	// messageBudget is in runes so a cut cannot split a UTF-8 sequence.
 	messageBudget = 2000
@@ -33,10 +34,10 @@ const (
 // toolLog mirrors the export endpoint's snake_case log shape, plus the
 // promoted network columns and honesty flags for anything a list omitted.
 //
-// The free-form fields are `any`, not json.RawMessage: the SDK infers an
-// output schema from this struct and validates every result against it, and
-// RawMessage infers as a string while carrying an object — every log with
-// metadata would fail its own tool's validation.
+// The free-form fields are `any`, not json.RawMessage: an output schema is
+// inferred from this struct and every result is validated against it, and
+// RawMessage infers as an array of bytes while carrying an object, so every
+// log with metadata would fail its own tool's validation.
 type toolLog struct {
 	ID               string  `json:"id"`
 	SessionID        string  `json:"session_id"`
@@ -64,12 +65,26 @@ type toolLog struct {
 // rawJSON decodes a stored jsonb value for a tool result. The stored bytes
 // are valid JSON by construction; anything else decodes to nil and is
 // omitted rather than sent broken.
+//
+// Numbers stay json.Number, so they are written back as the literal the app
+// sent: 12.0 is not 12 to a model that wants a double, and an id past 2^53 is
+// not an id once it has been through a float64.
+//
+// A number too large for any float64 is the exception. jsonb stores one, and
+// addTool's schema check and any client reading into a float64 refuse it, so
+// it would fail the whole result it is in, a page of search_logs included. The
+// value holding it is omitted instead. The SDK never sends one.
 func rawJSON(r *json.RawMessage) any {
 	if r == nil || len(*r) == 0 {
 		return nil
 	}
+	if err := json.Unmarshal(*r, new(any)); err != nil {
+		return nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(*r))
+	dec.UseNumber()
 	var v any
-	if err := json.Unmarshal(*r, &v); err != nil {
+	if err := dec.Decode(&v); err != nil {
 		return nil
 	}
 	return v

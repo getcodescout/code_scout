@@ -134,7 +134,7 @@ var (
 )
 
 func (d Deps) addSessionTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "list_sessions",
 		Description: "One row per app launch, newest first: device, OS, app version, the user if " +
 			"the app named one, and how many logs, errors and network calls the launch produced.",
@@ -171,7 +171,7 @@ func (d Deps) addSessionTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_session_timeline",
 		Description: "Everything one launch did, in order: the session's device and app facts, then " +
 			"its logs oldest first. This is the tool for a session id out of a bug report.",
@@ -213,7 +213,7 @@ func (d Deps) addSessionTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "list_devices",
 		Description: "Launches rolled up by installation: one row per device install, with its " +
 			"current model, OS and app version, and lifetime counts.",
@@ -234,7 +234,7 @@ func (d Deps) addSessionTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "get_device",
 		Description: "One device install by installation id, with its lifetime counts.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getDeviceIn) (*mcp.CallToolResult, getDeviceOut, error) {

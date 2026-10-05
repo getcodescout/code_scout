@@ -156,7 +156,7 @@ The search box takes a small query language, and you can mix it with plain text.
 | `tag:checkout` | logs carrying a tag |
 | `-tag:heartbeat` | everything except that tag |
 | `session:4f2a81b0-9d3c-4e77-b0a1-2f9c6d5e8a41` | one app launch |
-| `request:7d19c204-1b6e-4a52-9c88-3ee1f0a7b942` | one network call and both of its logs |
+| `request:7d19c204-1b6e-4a52-9c88-3ee1f0a7b942` | one network call: its request, its response or error, and any log your app linked to it |
 | `user:ada@example.com` | everything that happened to one person |
 | `installation:9eec2f07-52c1-4a90-8e6b-77d0c3b41f28` | one install, across launches |
 | `app_version:3.11.2` | one build of your app |
@@ -174,8 +174,9 @@ match loosely.
 
 ### Network
 
-The SDK records a request, a response and an error separately. The dashboard pairs them back into
-one row per call, with a waterfall showing when each one ran and how long it took.
+The SDK records a call's request, and then its response or its error, as separate logs. The
+dashboard pairs them back into one row per call, with a waterfall showing when each one ran and how
+long it took. A call whose answer was never recorded shows as pending.
 
 <p align="center">
   <img src=".github/assets/screenshots/network.png" alt="Network inspector" width="880" />
@@ -183,6 +184,11 @@ one row per call, with a waterfall showing when each one ran and how long it too
 
 Headers, payload and response body each get their own tab, the same way browser dev tools do.
 Anything the SDK redacted shows as a redaction rather than as the value.
+
+When your app logs something about a call with its request id, such as the error its model threw on
+a response body, the inspector lists that log above the tabs under **Logged by the app**, so the
+error and the body that caused it are read together. The call itself is unchanged: a 200 the app
+could not read is still a 200.
 
 ### Errors
 

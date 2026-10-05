@@ -342,6 +342,38 @@ func TestListSessionsCountsItsLogs(t *testing.T) {
 	}
 }
 
+// A log the app wrote about a call is a log, and an error when it is one, but
+// not network traffic: the network count is the phase rows alone.
+func TestSessionCountsTakeALinkedLogAsALogNotACall(t *testing.T) {
+	db := testDB(t)
+	repo := NewSessionRepo(db)
+	logs := NewLogRepo(db)
+	ctx := context.Background()
+	projectID := seedProject(t, db)
+
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	launch := seedSession(t, repo, projectID, nil, nil, "Pixel 7", base, time.Minute)
+	cart := uuid.New()
+	if _, err := logs.CreateBatch(ctx, []domain.Log{
+		netPhase(projectID, launch, cart, "request", "GET", "https://api.test/v2/cart", nil, base),
+		netPhase(projectID, launch, cart, "response", "GET", "https://api.test/v2/cart", intp(200), base.Add(time.Second)),
+		linkedAppLog(projectID, launch, cart, base.Add(2*time.Second)),
+	}); err != nil {
+		t.Fatalf("seed logs: %v", err)
+	}
+
+	out, err := repo.List(ctx, projectID, nil, 50)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("want 1 session, got %d", len(out))
+	}
+	if out[0].Logs != 3 || out[0].Errors != 1 || out[0].Network != 2 {
+		t.Errorf("want 3 logs, 1 error and 2 network, got %d, %d and %d", out[0].Logs, out[0].Errors, out[0].Network)
+	}
+}
+
 // A session that has logged nothing is still a session — the app launched. It
 // must not vanish because an inner join found no logs to match.
 func TestListSessionsKeepsSilentOnes(t *testing.T) {

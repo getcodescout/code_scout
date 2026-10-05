@@ -166,6 +166,37 @@ registered tools and fails on a write-shaped name or input field. Do not add a g
 result (`sdk_shape_test.go` pins this), so unexpected errors go through `internal()`, which logs
 the real thing and returns a bare "internal error". Never return a raw service error from a tool.
 
+**Every tool registers through `addTool` in `server.go`, never the SDK's `mcp.AddTool`.**
+`mcp.AddTool` checks typed output by decoding it into `any` and then sends a marshal of that copy,
+so every number goes through a float64: a body's `12.0` reaches the agent as `12`, and
+`9007199254740993` as `9007199254740992`. `TestTheSDKSendsEveryNumberThroughAFloat64` pins the SDK
+doing it. `addTool` sends the bytes `json.Marshal` wrote for the handler's output, after checking
+them against the inferred output schema itself. That check is why free-form output fields are
+`any`: `json.RawMessage` infers as an array of bytes, so one carrying an object fails it and the
+call answers "internal error". A tool registered with `mcp.AddTool` still lists, answers and passes
+every test that does not look at a number, so `TestOnlyAddToolCallsTheSDKsAddTool` parses this
+package and fails on any `mcp.AddTool` outside `addTool`.
+
+**Stored JSON is decoded with `UseNumber`, never with a plain `json.Unmarshal` into `any`.**
+Metadata, bodies, tags and stack traces are stored as the bytes the app sent. A plain decode makes
+every number a float64, which prints `12.0` as `12` and rounds an integer above 2^53, and that
+difference is often the whole story of a decode failure: the app's model wanted a double and got an
+int. The dashboard decodes through `decodeJSON` in `view/network_helpers.go`, behind `decodeMeta`
+(the inspector's bodies and headers) and `prettyJSON` (metadata in the log viewer and on the call
+page). MCP decodes through `rawJSON` in `format.go`. A number too large for any float64 makes
+`rawJSON` omit the value holding it, because the schema check and any client reading a float64
+would refuse the whole result. `TestNumbersRenderAsTheAppSentThem` and
+`TestNumbersReachTheAgentAsTheAppSentThem` fail on a plain decode.
+
+**A call's phases and the app's own logs about it are told apart on `is_network_call` alone.** An
+app log can carry a call's `request_id` with `is_network_call` false and no `call_phase`, so a
+shared request id does not make a log a phase. `domain.SplitCallLogs` splits what `GetByRequestID`
+returns on `IsNetworkCall`, and `get_network_request` (its `phases` and `linked_logs`), the
+inspector and the call page all use it. Every other pairing site reads the same column and never
+`request_id`: `ListNetworkCalls` and `GetByRequestID` in SQL, `phaseLog`, the session and overview
+counts, and the live view's network gate. Pair on `request_id` and an app log turns into a pending
+call of its own, stretches its call's duration, or reads to an agent as the call's error phase.
+
 The transport is `Stateless: true, JSONResponse: true`: every POST is one JSON body, no session
 state, nothing held open against the 30s WriteTimeout. **`DisableLocalhostProtection: true` is
 load-bearing, not a hardening flag to restore**: the SDK's DNS-rebinding guard refuses a loopback

@@ -105,17 +105,19 @@ func (s *LogQueryService) GetSessionTimeline(ctx context.Context, projectID, ses
 	return logs, nil
 }
 
-// GetNetworkRequest returns all log phases for a network request.
-func (s *LogQueryService) GetNetworkRequest(ctx context.Context, projectID uuid.UUID, requestID uuid.UUID) ([]domain.Log, error) {
+// GetNetworkRequest returns the call's phases and the earliest linkedLimit of
+// the logs the app linked to it, oldest first, with a count of all of the
+// app's. domain.SplitCallLogs tells the two apart.
+func (s *LogQueryService) GetNetworkRequest(ctx context.Context, projectID, requestID uuid.UUID, linkedLimit int) ([]domain.Log, int, error) {
 	log := cslog.L(ctx)
 
-	logs, err := s.repo.GetByRequestID(ctx, projectID, requestID)
+	logs, linkedTotal, err := s.repo.GetByRequestID(ctx, projectID, requestID, linkedLimit)
 	if err != nil {
 		log.WithError(err).Error("Failed to get network request")
-		return nil, err
+		return nil, 0, err
 	}
 
-	return logs, nil
+	return logs, linkedTotal, nil
 }
 
 // GetLogStats returns aggregated log statistics for sparkline display.

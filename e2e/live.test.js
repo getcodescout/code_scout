@@ -546,6 +546,52 @@ test('a failed call is told apart from one that answered', async () => {
   }
 })
 
+// SDK 1.6.0 streams a log the app linked to a call with the call's request id
+// and no is_network_call, exactly as below. It is a log, so the Logs tab shows
+// it, and not a phase: paired on its request id it would become a call row of
+// its own, pending forever when no phase of that call was ever sent.
+test('a log the app linked to a call stays off the Network tab', async () => {
+  const code = await mintCode(page)
+  const { dev, reply } = await pair(code)
+  try {
+    await page.goto(`${BASE}/project/${projectID}/live/${reply.session_id}`)
+    await page.waitForSelector('[data-live-tab="net"]')
+    await page.click('[data-live-tab="net"]')
+
+    const decodeError = "type 'int' is not a subtype of type 'double' in type cast"
+    const rid = randomUUID()
+    const t0 = Date.now()
+    // A call nobody captured: the app logged against it and no phase follows.
+    dev.send({ logs: [{ level: 'error', message: 'Could not read GET /v2/orders', error: decodeError,
+      timestamp: new Date(t0).toISOString(), request_id: randomUUID() }] })
+    dev.send({ logs: [{ level: 'debug', message: 'Network Request', timestamp: new Date(t0).toISOString(),
+      is_network_call: true, request_id: rid, call_phase: 'request',
+      method: 'GET', url: 'https://api.shop.dev/v2/cart' }] })
+    dev.send({ logs: [{ level: 'debug', message: 'Network Response', timestamp: new Date(t0 + 118).toISOString(),
+      is_network_call: true, request_id: rid, call_phase: 'response',
+      method: 'GET', url: 'https://api.shop.dev/v2/cart', status_code: 200 }] })
+    dev.send({ logs: [{ level: 'error', message: 'Could not read GET /v2/cart', error: decodeError,
+      timestamp: new Date(t0 + 120).toISOString(), request_id: rid }] })
+
+    // Frames arrive in order, and each one reaches the network pane before
+    // its row is added to the logs pane, so once the last app log is a row
+    // every frame above has been seen by both.
+    await page.waitForFunction(
+      () => document.getElementById('live-stream').textContent.includes('Could not read GET /v2/cart'),
+      null, { timeout: 8000 })
+
+    const rows = page.locator('[data-net-rows] tr')
+    assert.strictEqual(await rows.count(), 1, 'a log the app linked to a call became a call row')
+    assert.strictEqual((await page.locator('[data-live-net-count]').textContent()).trim(), '1')
+    assert.strictEqual(await rows.first().getAttribute('data-net-state'), 'ok')
+    const cells = await rows.first().locator('td').allTextContents()
+    assert.ok(cells.includes('200') && cells.includes('118 ms'),
+      `the app's log changed the call: ${cells.join(' | ')}`)
+  } finally {
+    dev.close()
+  }
+})
+
 test('the database tab can be retried after the device was asleep', async () => {
   // The first click often lands while the phone is in a pocket. That answers
   // "the device did not answer", and the pane it renders has nothing in it

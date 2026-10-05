@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -840,7 +841,29 @@ func TestNetworkFilters(t *testing.T) {
 	}
 }
 
-// Plain logs are not calls, and another project's calls never appear.
+// linkedAppLog is a log the app wrote about a call, the way ingest stores one:
+// the call's request id, no phase, not a network log, no promoted columns.
+func linkedAppLog(projectID, sessionID, requestID uuid.UUID, at time.Time) domain.Log {
+	clientID := uuid.New()
+	errText := "type 'int' is not a subtype of type 'double' in type cast"
+	meta := json.RawMessage(`{"key":"tax_rate","expected":"double"}`)
+	return domain.Log{
+		ClientID:  &clientID,
+		ProjectID: projectID,
+		SessionID: sessionID,
+		Level:     "error",
+		Message:   "Could not read GET /v2/cart",
+		Error:     &errText,
+		Metadata:  &meta,
+		TimeStamp: at,
+		RequestID: &requestID,
+	}
+}
+
+// Plain logs are not calls, and another project's calls never appear. Nor does
+// a log the app wrote about a call: it shares the call's request id and is not
+// one of its phases, so the call's state, status, duration and the count are
+// what the phases alone say, and an id with only an app log is no call at all.
 func TestNetworkCallsIgnoreNonNetworkAndOtherProjects(t *testing.T) {
 	db := testDB(t)
 	repo := NewLogRepo(db)
@@ -848,10 +871,17 @@ func TestNetworkCallsIgnoreNonNetworkAndOtherProjects(t *testing.T) {
 	mine := seedProject(t, db)
 	theirs := seedProject(t, db)
 
-	base := time.Now().Add(-time.Hour)
+	base := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
+	session, cart, uncaptured := uuid.New(), uuid.New(), uuid.New()
 	if _, err := repo.CreateBatch(ctx, []domain.Log{
 		taggedLog(mine, "just a log", "info", nil),
-		netPhase(mine, uuid.New(), uuid.New(), "request", "GET", "https://api.test/v2/mine", nil, base),
+		netPhase(mine, session, cart, "request", "GET", "https://api.test/v2/mine", nil, base),
+		netPhase(mine, session, cart, "response", "GET", "https://api.test/v2/mine", intp(200), base.Add(250*time.Millisecond)),
+		// Two seconds after the response, so that counted as a phase it would
+		// stretch the call to 2s.
+		linkedAppLog(mine, session, cart, base.Add(2*time.Second)),
+		// The phases were never stored, so this is the only log with its id.
+		linkedAppLog(mine, session, uncaptured, base.Add(3*time.Second)),
 		netPhase(theirs, uuid.New(), uuid.New(), "request", "GET", "https://api.test/v2/theirs", nil, base),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -862,7 +892,136 @@ func TestNetworkCallsIgnoreNonNetworkAndOtherProjects(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	if len(calls) != 1 || calls[0].Path() != "/v2/mine" {
-		t.Errorf("want only this project's one call, got %+v", calls)
+		t.Fatalf("want only this project's one call, got %+v", calls)
+	}
+	got := calls[0]
+	if got.State() != domain.CallComplete || got.Failed() {
+		t.Errorf("the app's error changed the call: state %s, failed %v", got.State(), got.Failed())
+	}
+	if got.StatusCode == nil || *got.StatusCode != 200 {
+		t.Errorf("want the response's 200, got %v", got.StatusCode)
+	}
+	if got.Duration() != 250*time.Millisecond {
+		t.Errorf("duration should be request to response, got %s", got.Duration())
+	}
+
+	failed, err := repo.ListNetworkCalls(ctx, mine, domain.NetworkFilter{Status: "failed"}, 50)
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("a 200 the app could not read is not a failed call, got %+v", failed)
+	}
+}
+
+// Every screen that shows one call reads it through here: the inspector, the
+// call page and MCP. They split what comes back themselves, so this has to hand
+// back the app's own logs beside the phases, in time order, and nothing else.
+func TestGetByRequestIDReturnsThePhasesAndTheAppsLinkedLog(t *testing.T) {
+	db := testDB(t)
+	repo := NewLogRepo(db)
+	ctx := context.Background()
+	mine := seedProject(t, db)
+	theirs := seedProject(t, db)
+
+	base := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
+	session, cart, other := uuid.New(), uuid.New(), uuid.New()
+	if _, err := repo.CreateBatch(ctx, []domain.Log{
+		linkedAppLog(mine, session, cart, base.Add(2*time.Second)),
+		netPhase(mine, session, cart, "response", "GET", "https://api.test/v2/cart", intp(200), base.Add(250*time.Millisecond)),
+		netPhase(mine, session, cart, "request", "GET", "https://api.test/v2/cart", nil, base),
+		netPhase(mine, session, other, "request", "GET", "https://api.test/v2/other", nil, base),
+		// The same id in another project is another project's business.
+		linkedAppLog(theirs, uuid.New(), cart, base.Add(time.Second)),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	logs, linkedTotal, err := repo.GetByRequestID(ctx, mine, cart, 3)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(logs) != 3 {
+		t.Fatalf("want the two phases and the app's log, got %d: %+v", len(logs), logs)
+	}
+	if linkedTotal != 1 {
+		t.Errorf("want the app's one log counted and nothing of another project's, got %d", linkedTotal)
+	}
+	for i, want := range []string{"Network request", "Network response", "Could not read GET /v2/cart"} {
+		if logs[i].Message != want {
+			t.Errorf("position %d: want %q, got %q", i, want, logs[i].Message)
+		}
+	}
+
+	app := logs[2]
+	if app.IsNetworkCall || app.CallPhase != nil {
+		t.Errorf("the app's log came back as a phase: network=%v phase=%v", app.IsNetworkCall, app.CallPhase)
+	}
+	if app.RequestID == nil || *app.RequestID != cart {
+		t.Errorf("the app's log lost its request id: %v", app.RequestID)
+	}
+	if app.Error == nil || !strings.Contains(*app.Error, "is not a subtype of type 'double'") {
+		t.Errorf("the app's log lost its error text: %v", app.Error)
+	}
+
+	phases, linked := domain.SplitCallLogs(logs)
+	if len(phases) != 2 || len(linked) != 1 {
+		t.Errorf("want two phases and one linked log, got %d and %d", len(phases), len(linked))
+	}
+}
+
+// The app can put a call's request id on as many logs as it likes, one for each
+// list item its model rejected, and every look at the call reads it through
+// here. So the app's logs stop at the caller's limit and are counted instead,
+// and the phases come back whatever the app logged around them.
+func TestGetByRequestIDCapsTheAppsLogsAndCountsThem(t *testing.T) {
+	db := testDB(t)
+	repo := NewLogRepo(db)
+	ctx := context.Background()
+	mine := seedProject(t, db)
+	theirs := seedProject(t, db)
+
+	base := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
+	session, cart := uuid.New(), uuid.New()
+	seed := []domain.Log{
+		netPhase(mine, session, cart, "request", "GET", "https://api.test/v2/cart", nil, base),
+		// After every one of the app's logs, so a limit on the whole query
+		// rather than on the app's logs would cut the call short.
+		netPhase(mine, session, cart, "response", "GET", "https://api.test/v2/cart", intp(200), base.Add(time.Minute)),
+		linkedAppLog(theirs, uuid.New(), cart, base.Add(time.Millisecond)),
+	}
+	for i := 1; i <= 7; i++ {
+		l := linkedAppLog(mine, session, cart, base.Add(time.Duration(i)*time.Second))
+		l.Message = "Could not read item " + strconv.Itoa(i)
+		seed = append(seed, l)
+	}
+	if _, err := repo.CreateBatch(ctx, seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	logs, linkedTotal, err := repo.GetByRequestID(ctx, mine, cart, 3)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var got []string
+	for _, l := range logs {
+		got = append(got, l.Message)
+	}
+	want := []string{"Network request", "Could not read item 1", "Could not read item 2", "Could not read item 3", "Network response"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("want both phases and the app's first three logs, oldest first:\n got %q\nwant %q", got, want)
+	}
+	if linkedTotal != 7 {
+		t.Errorf("want all seven of the app's logs counted and none of another project's, got %d", linkedTotal)
+	}
+
+	// Under the limit, nothing is left out and the count is what came back.
+	logs, linkedTotal, err = repo.GetByRequestID(ctx, mine, cart, 10)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(logs) != 9 || linkedTotal != 7 {
+		t.Errorf("want the two phases and all seven app logs, counted as seven, got %d logs and %d", len(logs), linkedTotal)
 	}
 }
 

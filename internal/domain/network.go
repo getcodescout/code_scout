@@ -36,6 +36,30 @@ type NetworkCall struct {
 	ErrorMessage *string
 }
 
+// SplitCallLogs separates the logs that share one request id into the call's
+// own phases and the logs the app wrote about it, such as a response body its
+// model could not read.
+//
+// The test is is_network_call and nothing else, the one ListNetworkCalls pairs
+// on. Sorting on a present request id, or on a missing phase, would count the
+// app's log as part of the call.
+func SplitCallLogs(logs []Log) (phases, linked []Log) {
+	for _, l := range logs {
+		if l.IsNetworkCall {
+			phases = append(phases, l)
+		} else {
+			linked = append(linked, l)
+		}
+	}
+	return phases, linked
+}
+
+// CallNotCaptured is what every surface says for a request id that the app
+// logged against but whose phases were never stored.
+const CallNotCaptured = "The request and response for this call were not stored. " +
+	"The SDK writes network logs at debug, so an app whose minimumLevel is info or higher " +
+	"keeps none of them. Retention can also remove them."
+
 // CallState is the four outcomes the prototype asks to be distinguishable.
 type CallState string
 

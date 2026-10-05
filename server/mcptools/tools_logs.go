@@ -17,7 +17,8 @@ const searchSyntax = "Query syntax (all clauses AND together): " +
 	"tag:checkout (repeatable, ANDed) and -tag:noise to exclude | " +
 	"is:network for network phases only | " +
 	"last:1h, last:24h, last:7d or last:30d | " +
-	"session:UUID for one launch | request:UUID for one network call | " +
+	"session:UUID for one launch | " +
+	"request:UUID for one network call's phases plus any log the app linked to it, such as a failure to decode its body | " +
 	"fingerprint:\"...\" for one error group | " +
 	"user:alice, installation:UUID, app_version:3.2.1, sdk_version:1.5.0 match the log's " +
 	"whole session exactly; device:pixel and os:android match as substrings | " +
@@ -79,7 +80,7 @@ type errorGroupsOut struct {
 }
 
 func (d Deps) addLogTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "search_logs",
 		Description: "Search one project's logs, newest first, with keyset pagination. " + searchSyntax,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in searchLogsIn) (*mcp.CallToolResult, searchLogsOut, error) {
@@ -107,7 +108,7 @@ func (d Deps) addLogTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_log",
 		Description: "One log, whole: the full message, metadata and stack trace that " +
 			"search_logs may have truncated or omitted.",
@@ -132,7 +133,7 @@ func (d Deps) addLogTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_error_groups",
 		Description: "A project's errors and fatals grouped into distinct problems, most frequent " +
 			"first, each with its latest stack trace. The place to start on \"what is broken?\".",

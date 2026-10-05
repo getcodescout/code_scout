@@ -16,7 +16,7 @@ package app
 // still says 1.1.0 here.
 //
 // Bump it in the same commit that dates the matching CHANGELOG.md section.
-const Version = "1.1.0"
+const Version = "1.2.0"
 
 // Commit and BuildTime describe the build rather than the release, and are
 // injected at link time with -ldflags. They default to "-" so a `go build` with

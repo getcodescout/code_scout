@@ -3,6 +3,7 @@ package mcptools
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/getcodescout/code_scout/internal/domain"
@@ -44,11 +45,28 @@ type getNetworkRequestIn struct {
 }
 
 type getNetworkRequestOut struct {
-	// Phases are the call's raw logs, whole and in order: the request, then
-	// its response or error. Headers and bodies live in each phase's
-	// metadata, subject to whatever redaction the app configured.
+	// Phases are the call's own network logs, whole and in order: the
+	// request, then its response or error. Headers and bodies live in each
+	// phase's metadata, subject to whatever redaction the app configured.
 	Phases []toolLog `json:"phases"`
+	// LinkedLogs are logs the app wrote itself and tied to this call with its
+	// request id, such as a response body its model could not decode. They
+	// are not HTTP phases and say nothing about whether the call succeeded.
+	// Only the earliest linkedLogLimit, with the list budgets applied.
+	LinkedLogs []toolLog `json:"linked_logs"`
+	// LinkedLogsTotal counts every log the app linked to the call, and
+	// LinkedLogsCapped says linked_logs left some of them out.
+	LinkedLogsTotal  int  `json:"linked_logs_total"`
+	LinkedLogsCapped bool `json:"linked_logs_capped,omitempty"`
+	// Note is set when no phase was stored and only linked logs remain.
+	Note string `json:"note,omitempty"`
 }
+
+// linkedLogLimit is how many of the app's logs get_network_request lists for
+// one call. The app can put a request id on as many logs as it likes, one for
+// each list item its model rejected, and the result has to fit the context
+// window it is read into.
+const linkedLogLimit = 20
 
 var (
 	errRequestNotFound = errNotFoundFor("network request")
@@ -64,7 +82,7 @@ func validStatusClass(s string) bool {
 }
 
 func (d Deps) addNetworkTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "list_network_calls",
 		Description: "A project's HTTP calls, one row per call with its phases already paired: " +
 			"method, URL, status, duration and state. Filter by path, method, status class or session.",
@@ -111,10 +129,16 @@ func (d Deps) addNetworkTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "get_network_request",
-		Description: "One HTTP call's raw phase logs, whole: the request and its response or " +
-			"error, with full headers and bodies in each phase's metadata.",
+		Description: "One HTTP call's logs. phases are the call itself, whole: the request and its " +
+			"response or error, with full headers and bodies in each phase's metadata. linked_logs " +
+			"are logs the app wrote with the call's request id, for example a failure to decode " +
+			"the response body; they are not phases and do not change whether the call succeeded. " +
+			"linked_logs lists the earliest " + strconv.Itoa(linkedLogLimit) + ", truncated or " +
+			"omitted with a flag like search_logs rows; linked_logs_total counts them all, get_log " +
+			"returns one whole, and search_logs with request:UUID pages through every one. " +
+			"When no phase was stored, phases is empty and note says why.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getNetworkRequestIn) (*mcp.CallToolResult, getNetworkRequestOut, error) {
 		var out getNetworkRequestOut
 		projectID, err := d.requireProject(ctx, in.ProjectID)
@@ -125,16 +149,26 @@ func (d Deps) addNetworkTools(s *mcp.Server) {
 		if err != nil {
 			return nil, out, errRequestNotFound
 		}
-		phases, err := d.Logs.GetNetworkRequest(ctx, projectID, requestID)
+		logs, linkedTotal, err := d.Logs.GetNetworkRequest(ctx, projectID, requestID, linkedLogLimit)
 		if err != nil {
 			return nil, out, internal(ctx, err)
 		}
-		if len(phases) == 0 {
+		if len(logs) == 0 {
 			return nil, out, errRequestNotFound
 		}
+		phases, linked := domain.SplitCallLogs(logs)
 		out.Phases = make([]toolLog, 0, len(phases))
 		for _, l := range phases {
 			out.Phases = append(out.Phases, wholeLog(l))
+		}
+		out.LinkedLogs = make([]toolLog, 0, len(linked))
+		for _, l := range linked {
+			out.LinkedLogs = append(out.LinkedLogs, listLog(l))
+		}
+		out.LinkedLogsTotal = linkedTotal
+		out.LinkedLogsCapped = linkedTotal > len(linked)
+		if len(phases) == 0 {
+			out.Note = domain.CallNotCaptured
 		}
 		return nil, out, nil
 	})

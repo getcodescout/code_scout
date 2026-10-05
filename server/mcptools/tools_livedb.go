@@ -94,7 +94,7 @@ type liveDBRowsOut struct {
 }
 
 func (d Deps) addLiveDBTools(s *mcp.Server) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "live_db_sources",
 		Description: "The databases a paired device's app has chosen to expose: SQLite files and " +
 			"key-value stores, read straight off the phone. Nothing is stored server-side, and " +
@@ -109,7 +109,7 @@ func (d Deps) addLiveDBTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "live_db_namespaces",
 		Description: "One source's tables, views or boxes, as the device lists them.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in liveDBNamespacesIn) (*mcp.CallToolResult, liveDBNamespacesOut, error) {
@@ -122,7 +122,7 @@ func (d Deps) addLiveDBTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name:        "live_db_schema",
 		Description: "One namespace's columns as the device describes them, including which are redacted.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in liveDBSchemaIn) (*mcp.CallToolResult, liveDBSchemaOut, error) {
@@ -136,7 +136,7 @@ func (d Deps) addLiveDBTools(s *mcp.Server) {
 		return nil, out, nil
 	})
 
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, &mcp.Tool{
 		Name: "live_db_rows",
 		Description: "A page of rows from the device, 100 at a time: the app's actual local state " +
 			"at this moment. Values the app redacts arrive redacted; stopped_for_size true means " +

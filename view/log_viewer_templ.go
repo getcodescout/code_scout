@@ -924,7 +924,7 @@ func levelBorderColor(level string) string {
 
 func prettyJSON(raw json.RawMessage) string {
 	var obj interface{}
-	if err := json.Unmarshal(raw, &obj); err != nil {
+	if err := decodeJSON(raw, &obj); err != nil {
 		return string(raw)
 	}
 	pretty, err := json.MarshalIndent(obj, "", "  ")

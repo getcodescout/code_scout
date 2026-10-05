@@ -689,7 +689,7 @@ func sessionLogRow(d SessionDetailData, log domain.Log, start time.Time) templ.C
 				return templ_7745c5c3_Err
 			}
 		}
-		if log.IsNetworkCall && log.RequestID != nil {
+		if log.RequestID != nil {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<a href=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -697,7 +697,7 @@ func sessionLogRow(d SessionDetailData, log domain.Log, start time.Time) templ.C
 			var templ_7745c5c3_Var24 templ.SafeURL
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(fmt.Sprintf("/project/%s/network/%s", d.ProjectID, log.RequestID)))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/session_detail.templ`, Line: 242, Col: 92}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/session_detail.templ`, Line: 245, Col: 92}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 			if templ_7745c5c3_Err != nil {
@@ -745,7 +745,7 @@ func sessionNetworkPane(d SessionDetailData) templ.Component {
 			templ_7745c5c3_Var25 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		if len(d.Network.Calls) == 0 {
+		if len(d.Network.Calls) == 0 && d.Network.Uncaptured == nil {
 			templ_7745c5c3_Err = sessionEmpty("This launch made no network calls.").Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
@@ -755,7 +755,7 @@ func sessionNetworkPane(d SessionDetailData) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = networkList(d.Network).Render(ctx, templ_7745c5c3_Buffer)
+			templ_7745c5c3_Err = networkListOrNone(d.Network).Render(ctx, templ_7745c5c3_Buffer)
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -827,7 +827,7 @@ func sessionTh(label string, extra string) templ.Component {
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(label)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/session_detail.templ`, Line: 276, Col: 9}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/session_detail.templ`, Line: 281, Col: 9}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 		if templ_7745c5c3_Err != nil {
@@ -869,7 +869,7 @@ func sessionEmpty(message string) templ.Component {
 		var templ_7745c5c3_Var31 string
 		templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(message)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/session_detail.templ`, Line: 281, Col: 44}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/session_detail.templ`, Line: 286, Col: 44}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 		if templ_7745c5c3_Err != nil {

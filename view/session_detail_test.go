@@ -232,6 +232,28 @@ func TestTheNetworkTabInspectsACallWithoutLeavingTheLaunch(t *testing.T) {
 	}
 }
 
+// A log the app wrote about a call carries the call's request id and is not a
+// network log. It is the row you are reading when a body broke the app, so it
+// links to the call like the phases do.
+func TestAnAppLogWithARequestIDLinksToItsCall(t *testing.T) {
+	start := launchedAt()
+	rid := uuid.New()
+	errText := "type 'int' is not a subtype of type 'double' in type cast"
+	d := detailFor("logs", []domain.Log{
+		{Level: "info", Message: "user opened the cart", TimeStamp: start},
+		{Level: "error", Message: "Could not read GET /v2/cart", Error: &errText, RequestID: &rid, TimeStamp: start.Add(time.Second)},
+	}, nil)
+
+	html := render(t, SessionDetailPage(d))
+	if n := strings.Count(html, "Inspect this call"); n != 1 {
+		t.Errorf("want one link, on the app log only, got %d", n)
+	}
+	href := `href="/project/` + d.ProjectID.String() + "/network/" + rid.String() + `"`
+	if !strings.Contains(html, href) {
+		t.Errorf("the app log does not link to its call, wanted %s", href)
+	}
+}
+
 func TestAHostileLogMessageIsRenderedAsText(t *testing.T) {
 	start := launchedAt()
 	d := detailFor("logs", []domain.Log{

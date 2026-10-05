@@ -26,10 +26,18 @@ type NetworkData struct {
 	ProjectID uuid.UUID
 	Calls     []domain.NetworkCall
 	Filter    domain.NetworkFilter
-	// Selected is the call whose phases are loaded, and Phases are its logs.
-	// Both nil when the list is empty or nothing has been picked.
+	// Selected is the call whose phases are loaded, and Phases are its logs:
+	// every phase, and the first LinkedLogLimit of the app's own. Both nil when
+	// the list is empty or nothing has been picked.
 	Selected *domain.NetworkCall
 	Phases   []domain.Log
+	// LinkedTotal counts every log the app linked to the call, including the
+	// ones Phases leaves out.
+	LinkedTotal int
+	// Uncaptured is a request id with no row in the list because none of its
+	// phases were stored, only the app's own logs, which are then in Phases.
+	// Set only when Selected is nil.
+	Uncaptured *uuid.UUID
 	// Phase is which tab of the selected call is open: "headers", "payload",
 	// "response" or "error".
 	Phase string
@@ -50,7 +58,10 @@ templ NetworkPage(d NetworkData) {
 		</div>
 		<p class="mt-1 text-sm text-cs-muted">Every request, response and error, paired back into one row per call.</p>
 		@networkToolbar(d)
-		if len(d.Calls) == 0 {
+		// A call that was not captured has no row, so an empty list is no
+		// reason to hide its pane. An app at the default minimumLevel stores
+		// no network logs at all, so for that app the list is always empty.
+		if len(d.Calls) == 0 && d.Uncaptured == nil {
 			@networkEmpty(d.Filter)
 		} else {
 			<!-- The split. One column below 1100px, where 400px of detail beside
@@ -64,12 +75,24 @@ templ NetworkPage(d NetworkData) {
 			     view, so it flows and the page scrolls normally. -->
 			<div class="mt-4 grid min-h-[440px] grid-cols-1 overflow-hidden rounded-xl border border-cs-border xl:h-[calc(100vh-15rem)] xl:grid-cols-[1fr_420px]">
 				<div class="min-w-0 overflow-auto border-cs-border xl:border-r">
-					@networkList(d)
+					@networkListOrNone(d)
 				</div>
 				@NetworkDetailPane(d)
 			</div>
 			@NetworkCopyScript()
 		}
+	}
+}
+
+// Beside a call that was not captured the list can be empty, and an empty
+// table reads as a rendering bug. The pages' own empty states would be wrong
+// there: one says to add an interceptor, which is where the request id came
+// from, and the other says the launch made no calls, when it made this one.
+templ networkListOrNone(d NetworkData) {
+	if len(d.Calls) == 0 {
+		<p data-network-none class="p-8 text-center text-xs text-cs-muted">{ noCallsStored(d) }</p>
+	} else {
+		@networkList(d)
 	}
 }
 
@@ -296,7 +319,9 @@ templ statusChip(call domain.NetworkCall) {
 // click that silently does nothing.
 templ NetworkDetailPane(d NetworkData) {
 	<div id="network-detail" class="flex min-h-0 min-w-0 flex-col border-t border-cs-border xl:border-t-0">
-		if d.Selected == nil {
+		if d.Selected == nil && d.Uncaptured != nil {
+			@uncapturedCall(d, *d.Uncaptured)
+		} else if d.Selected == nil {
 			<div class="grid h-full place-items-center p-8 text-center text-xs text-cs-muted">
 				Select a call to inspect it
 			</div>
@@ -313,6 +338,9 @@ templ NetworkDetailPane(d NetworkData) {
 					<p class="mt-0.5 font-mono text-[10px] text-cs-muted">{ host }</p>
 				}
 			</div>
+			// Above the tabs rather than in one, so a log about the body stays
+			// in view beside whichever phase is open.
+			@paneLinkedLogs(d.ProjectID, d.Selected.RequestID, d.Phases, d.LinkedTotal)
 			@phaseTabs(d)
 			<!-- min-h-0 is load-bearing. A flex child defaults to min-height:auto,
 			     which refuses to shrink below its content, so overflow-y-auto here
@@ -326,20 +354,91 @@ templ NetworkDetailPane(d NetworkData) {
 	</div>
 }
 
+templ paneLinkedLogs(projectID uuid.UUID, requestID uuid.UUID, logs []domain.Log, linkedTotal int) {
+	if _, linked := domain.SplitCallLogs(logs); len(linked) > 0 {
+		<section data-linked-logs aria-label="Logged by the app" class="shrink-0 border-b border-cs-border px-4 pb-3 pt-2.5">
+			<h5 class="mb-1 flex items-baseline gap-2 text-[10px] font-bold uppercase tracking-wider text-cs-placeholder">
+				Logged by the app
+				@linkedLogsCount(len(linked), linkedTotal)
+			</h5>
+			@linkedLogRows(linked)
+			@requestLogsLink(projectID, requestID)
+		</section>
+	}
+}
+
+// No method, path, status or tabs: nothing that would say them was stored.
+templ uncapturedCall(d NetworkData, requestID uuid.UUID) {
+	<div class="border-b border-cs-border p-4">
+		<div class="flex items-center justify-between gap-2">
+			<span class="inline-flex rounded-full bg-[rgba(210,153,34,0.15)] px-2 py-0.5 font-mono text-[10px] font-bold text-[#D29922]">call not captured</span>
+			@dismissButton(d)
+		</div>
+		<p class="mt-2 break-all font-mono text-[10px] text-cs-muted">request { requestID.String() }</p>
+	</div>
+	@paneLinkedLogs(d.ProjectID, requestID, d.Phases, d.LinkedTotal)
+	<div class="min-h-0 flex-1 overflow-y-auto p-4">
+		<p data-call-not-captured class="text-xs leading-relaxed text-cs-muted">{ domain.CallNotCaptured }</p>
+	</div>
+}
+
+// A message and an error are whatever the app wrote, so both stay text.
+templ linkedLogRows(linked []domain.Log) {
+	<div class="divide-y divide-cs-border/60">
+		for _, l := range linked {
+			<div data-linked-log class="grid grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1 py-1.5">
+				<span class="font-mono text-[11px] tabular-nums text-cs-muted">{ fmtTime(l.TimeStamp, TimeSeconds) }</span>
+				<span>@LogLevelBadge(l.Level)</span>
+				<span class="truncate text-xs text-white" title={ l.Message }>{ l.Message }</span>
+				if l.Error != nil && *l.Error != "" {
+					<span class="col-span-full line-clamp-3 break-words font-mono text-[11.5px] text-cs-danger">{ *l.Error }</span>
+				}
+			</div>
+		}
+	</div>
+}
+
+templ linkedLogsCount(listed, linkedTotal int) {
+	if shown := linkedLogsShown(listed, linkedTotal); shown != "" {
+		<span data-linked-logs-count class="font-mono font-normal normal-case tracking-normal text-cs-muted">{ shown }</span>
+	}
+}
+
+templ requestLogsLink(projectID uuid.UUID, requestID uuid.UUID) {
+	<a
+		data-linked-logs-all
+		href={ templ.SafeURL(requestLogsHref(projectID, requestID)) }
+		class="mt-1.5 inline-block font-mono text-[11px] text-cs-primary no-underline hover:underline"
+	>Every log for this call</a>
+}
+
 // Closing goes back to the same list with nothing selected — the same request
 // the pane already knows how to answer, just without an rid. hx-push-url drops
 // it from the address bar too, so a reload does not reopen what you closed.
+//
+// With no list, a call that was not captured is all the split holds, and the
+// pane swapped in would ask you to select a call from nothing. Closing it is a
+// link to the page without it instead, which is the empty state.
 templ dismissButton(d NetworkData) {
-	<button
-		type="button"
-		data-dismiss-inspector
-		aria-label="Close the inspector"
-		hx-get={ d.fragmentHref(uuid.Nil, "") }
-		hx-target="#network-detail"
-		hx-swap="outerHTML"
-		hx-push-url={ d.pageHref(uuid.Nil, "") }
-		class="-mr-1 ml-1 rounded p-1 leading-none text-cs-muted transition-colors hover:bg-eerie-black hover:text-white"
-	>&times;</button>
+	if len(d.Calls) == 0 {
+		<a
+			href={ templ.SafeURL(d.pageHref(uuid.Nil, "")) }
+			data-dismiss-inspector
+			aria-label="Close the inspector"
+			class="-mr-1 ml-1 rounded p-1 leading-none text-cs-muted no-underline transition-colors hover:bg-eerie-black hover:text-white"
+		>&times;</a>
+	} else {
+		<button
+			type="button"
+			data-dismiss-inspector
+			aria-label="Close the inspector"
+			hx-get={ d.fragmentHref(uuid.Nil, "") }
+			hx-target="#network-detail"
+			hx-swap="outerHTML"
+			hx-push-url={ d.pageHref(uuid.Nil, "") }
+			class="-mr-1 ml-1 rounded p-1 leading-none text-cs-muted transition-colors hover:bg-eerie-black hover:text-white"
+		>&times;</button>
+	}
 }
 
 // Outside the scrolling body, so the call's identity stays put while you read.

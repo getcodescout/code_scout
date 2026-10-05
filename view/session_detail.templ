@@ -237,7 +237,10 @@ templ sessionLogRow(d SessionDetailData, log domain.Log, start time.Time) {
 			if log.Error != nil && *log.Error != "" {
 				<pre class="mt-1.5 whitespace-pre-wrap break-words font-mono text-[11px] text-cs-error">{ *log.Error }</pre>
 			}
-			if log.IsNetworkCall && log.RequestID != nil {
+			// Any log with a request id, the app's own too. The page it opens
+			// lists those beside the phases, and says so when the phases were
+			// never stored.
+			if log.RequestID != nil {
 				<a
 					href={ templ.SafeURL(fmt.Sprintf("/project/%s/network/%s", d.ProjectID, log.RequestID)) }
 					class="mt-1 inline-block font-mono text-[11px] text-cs-primary no-underline hover:underline"
@@ -256,12 +259,14 @@ templ sessionLogRow(d SessionDetailData, log domain.Log, start time.Time) {
 // beside the list rather than after it — and reusing the Network screen's pane
 // is what keeps the two from drifting apart.
 templ sessionNetworkPane(d SessionDetailData) {
-	if len(d.Network.Calls) == 0 {
+	// A call that was not captured has no row, so an empty list is no reason
+	// to hide its pane, the same as on the Network screen.
+	if len(d.Network.Calls) == 0 && d.Network.Uncaptured == nil {
 		@sessionEmpty("This launch made no network calls.")
 	} else {
 		<div class="grid min-h-[440px] grid-cols-1 overflow-hidden rounded-xl border border-cs-border xl:h-[calc(100vh-22rem)] xl:grid-cols-[1fr_420px]">
 			<div class="min-w-0 overflow-auto border-cs-border xl:border-r">
-				@networkList(d.Network)
+				@networkListOrNone(d.Network)
 			</div>
 			@NetworkDetailPane(d.Network)
 		</div>

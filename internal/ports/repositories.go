@@ -48,7 +48,10 @@ type LogRepository interface {
 	// as domain.ErrNotFound rather than as another project's row.
 	GetByID(ctx context.Context, projectID, logID uuid.UUID) (*domain.Log, error)
 	GetBySessionID(ctx context.Context, projectID, sessionID uuid.UUID, limit int) ([]domain.Log, error)
-	GetByRequestID(ctx context.Context, projectID uuid.UUID, requestID uuid.UUID) ([]domain.Log, error)
+	// GetByRequestID is every phase of one call and the earliest linkedLimit
+	// of the logs the app linked to it, oldest first. linkedTotal counts all of
+	// the app's, listed or not.
+	GetByRequestID(ctx context.Context, projectID, requestID uuid.UUID, linkedLimit int) (logs []domain.Log, linkedTotal int, err error)
 	GetStats(ctx context.Context, opts domain.LogStatsOpts) (*domain.LogStatsResult, error)
 	// GetOverview counts the tiles and chart on the project overview.
 	GetOverview(ctx context.Context, projectID uuid.UUID, window domain.OverviewWindow) (*domain.ProjectOverview, error)

@@ -16,6 +16,63 @@ refuses to publish when the two disagree.
 The Flutter SDK has its own changelog, in
 [code_scout_flutter](https://github.com/getcodescout/code_scout_flutter).
 
+## [1.2.0] - 2026-10-05
+
+When a response body stops matching the app's model, the failure can now be
+read beside the call that returned it.
+
+### Added
+
+- **Logs the app links to a call.** An app log that carries a call's request
+  id, such as the error its `fromJson` threw on a body whose `tax_rate` changed
+  from a double to an int, is now shown with that call. The Network inspector
+  and the call page list it under **Logged by the app**, between the call's
+  header and its tabs, so it stays in view beside the response body on every
+  tab. When the app linked more than three, the section lists the first three
+  and says how many there are. A link opens `request:<id>` in the log viewer,
+  which lists the call's phases and every log linked to it. A session's Logs
+  tab offers **Inspect this call** on these logs too, not only on network logs.
+  The app sets the link with the `requestId:` parameter added in the
+  `code_scout` 1.6.0 SDK.
+
+  The log never changes the call. A 200 whose body the app could not read is
+  still a complete 200, with the same status, duration and count, and it is not
+  counted as failed.
+
+- **"Call not captured."** The request id an app log names may have no network
+  logs behind it. The SDK writes them at debug, so an app whose `minimumLevel`
+  is info or higher keeps none, and retention can remove them. The call page and
+  the inspector now say so in plain words and list the app's logs, instead of
+  drawing an empty call.
+
+### Changed
+
+- **MCP `get_network_request` returns the app's linked logs apart from the
+  call's phases**, under `linked_logs`, so an agent does not read a decode
+  failure as the call's error phase. An app can link any number of logs to one
+  call, so it lists the earliest 20, each truncated or omitted with a flag the
+  way `search_logs` rows are, and `linked_logs_total` counts them all. When no
+  phase was stored it returns empty `phases`, the linked logs and a `note`
+  saying why, rather than not found. The `search_logs` syntax now says that
+  `request:UUID` returns those logs as well.
+
+### Fixed
+
+- **Numbers in stored JSON read exactly as the app sent them.** The inspector,
+  the call page, the log viewer's metadata and the MCP tools that return stored
+  logs and sessions passed them through a float64, so `12.0` showed as `12` and
+  an id above 2^53 came back rounded. That made a body which broke a model
+  expecting a double look as if it held one.
+
+- **The call page no longer hides a log that is not a phase.** A log with the
+  call's request id and no phase was given a panel with no tab to open it, or
+  opened first with no tab lit.
+
+- **A request's own id stays on every line it logged.** At debug, the line
+  that loads one call wrote the call's id under `request_id`, so searching the
+  server log for a request's id missed that line. The call's id is now
+  `call_request_id`.
+
 ## [1.1.0] - 2026-08-24
 
 CodeScout can now be read by the coding agent you already have open, instead of
@@ -163,5 +220,6 @@ tagged build, but an instance built from `main` before 2026-08-07 has them.
 - **The response body was logged on a 4xx or 5xx**, a second way for anything
   sensitive to escape.
 
+[1.2.0]: https://github.com/getcodescout/code_scout/releases/tag/v1.2.0
 [1.1.0]: https://github.com/getcodescout/code_scout/releases/tag/v1.1.0
 [1.0.0]: https://github.com/getcodescout/code_scout/releases/tag/v1.0.0

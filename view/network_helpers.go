@@ -1,6 +1,7 @@
 package view
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -230,7 +231,8 @@ func callsSummary(calls []domain.NetworkCall) string {
 //
 // A tab that could only ever say "nothing here" is not offered: no Payload
 // without a request body, no Response until the call came back.
-func AvailableTabs(phases []domain.Log) []string {
+func AvailableTabs(logs []domain.Log) []string {
+	phases, _ := domain.SplitCallLogs(logs)
 	if len(phases) == 0 {
 		return nil
 	}
@@ -276,13 +278,53 @@ func TabAvailable(phases []domain.Log, tab string) bool {
 	return false
 }
 
-func phaseLog(phases []domain.Log, tab string) *domain.Log {
-	for i := range phases {
-		if phases[i].CallPhase != nil && string(*phases[i].CallPhase) == tab {
-			return &phases[i]
+// phaseLog takes every log with the call's request id, the app's own included,
+// so it answers only from network logs: the same split the "Logged by the app"
+// section makes, or one log could be drawn as both.
+func phaseLog(logs []domain.Log, tab string) *domain.Log {
+	for i := range logs {
+		if logs[i].IsNetworkCall && logs[i].CallPhase != nil && string(*logs[i].CallPhase) == tab {
+			return &logs[i]
 		}
 	}
 	return nil
+}
+
+// noCallsStored is what an empty list says beside a call that was not
+// captured. It agrees with the pane: no calls were stored, which is not the
+// same as none being made.
+func noCallsStored(d NetworkData) string {
+	switch {
+	case d.launchScoped():
+		return "No network calls were stored for this launch."
+	case !d.Filter.IsEmpty():
+		return "Nothing matches that filter."
+	default:
+		return "No network calls were stored."
+	}
+}
+
+// LinkedLogLimit is how many of the app's logs the handlers load for the
+// section, which lists them all and leaves the rest to the link. The inspector
+// is a fixed height, and every row here is a row less of the response body
+// underneath.
+const LinkedLogLimit = 3
+
+// linkedLogsShown is the heading's count, given only when the section does not
+// list every one of the app's logs. The count is of the app's logs alone, so it
+// stays off the link: the page the link opens lists the phases as well.
+func linkedLogsShown(listed, linkedTotal int) string {
+	if linkedTotal <= listed {
+		return ""
+	}
+	return fmt.Sprintf("%d of %d", listed, linkedTotal)
+}
+
+// requestLogsHref is the log viewer filtered to one request id, which lists the
+// call's phases and every log the app linked to it.
+func requestLogsHref(projectID, requestID uuid.UUID) string {
+	q := url.Values{"q": []string{domain.SearchFilter{RequestID: &requestID}.Query()}}
+	return fmt.Sprintf("/project/%s/logs?%s", projectID, q.Encode())
 }
 
 func decodeMeta(raw *json.RawMessage) map[string]any {
@@ -290,10 +332,20 @@ func decodeMeta(raw *json.RawMessage) map[string]any {
 		return nil
 	}
 	var m map[string]any
-	if err := json.Unmarshal(*raw, &m); err != nil {
+	if err := decodeJSON(*raw, &m); err != nil {
 		return nil
 	}
 	return m
+}
+
+// decodeJSON keeps every number as the literal the app sent. A plain decode
+// makes each one a float64, which prints 12.0 as 12 and rounds an id above
+// 2^53, and the difference between 12.0 and 12 is what a decode failure is
+// about.
+func decodeJSON(raw []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	return dec.Decode(v)
 }
 
 func stringField(meta map[string]any, key string) string {

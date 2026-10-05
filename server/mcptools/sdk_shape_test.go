@@ -2,6 +2,7 @@ package mcptools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -14,8 +15,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// This file pins the three SDK behaviours the endpoint's design leans on,
-// over real HTTP. If an SDK upgrade changes any of them, the design has to be
+// This file pins the SDK behaviours the endpoint's design leans on, over real
+// HTTP. If an SDK upgrade changes any of them, the design has to be
 // revisited, and these say so before production does.
 
 type emptyIn struct{}
@@ -36,7 +37,18 @@ func shapeServer() *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyIn) (*mcp.CallToolResult, any, error) {
 			return nil, nil, errors.New("pq: password authentication failed")
 		})
+	// numbers returns two numbers as a stored body wrote them, the way
+	// rawJSON hands them to a tool.
+	mcp.AddTool(s, &mcp.Tool{Name: "numbers", Description: "number probe"},
+		func(context.Context, *mcp.CallToolRequest, emptyIn) (*mcp.CallToolResult, numbersOut, error) {
+			return nil, numbersOut{Price: json.Number("12.0"), ID: json.Number("9007199254740993")}, nil
+		})
 	return s
+}
+
+type numbersOut struct {
+	Price any `json:"price"`
+	ID    any `json:"id"`
 }
 
 func shapeHTTP(t *testing.T) *httptest.Server {
@@ -151,5 +163,21 @@ func TestStatelessJSONAnswersOneBody(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"jsonrpc"`) {
 		t.Errorf("expected one JSON-RPC body, got: %s", body)
+	}
+}
+
+// Pin 5: mcp.AddTool checks typed output by decoding it into `any`, then sends
+// a marshal of that decoded copy, so every number crosses a float64 on its way
+// out. A body's 12.0 arrives as 12 and an id past 2^53 arrives rounded, which
+// is why every tool here registers through addTool instead. If this starts
+// failing, the SDK sends numbers as written and addTool can go.
+func TestTheSDKSendsEveryNumberThroughAFloat64(t *testing.T) {
+	cs := shapeSession(t, shapeHTTP(t))
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "numbers", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if got := resultText(res); got != `{"id":9007199254740992,"price":12}` {
+		t.Errorf("the SDK no longer rewrites numbers, got %s", got)
 	}
 }

@@ -299,6 +299,67 @@ const phoneDatabase = {
   },
 }
 
+// Fixed rather than random: the API changes guide quotes this id under its
+// screenshot and in its MCP example.
+const LINKED_CART = '5c67a6d7-7663-4274-9152-ce71784c3aa1'
+const LINKED_SESSION = randomUUID()
+
+function linkedLogStory() {
+  const s = (message, level, at, extra = {}) =>
+    ({ message, level, at, sessionID: LINKED_SESSION, ...extra })
+
+  const call = (id, method, url, status, startMs, tookMs, body) => [
+    s('Network Request', 'debug', ago(startMs), {
+      tags: ['network'], network: true, requestID: id, callPhase: 'request',
+      metadata: { method, url, headers: { accept: 'application/json' } },
+    }),
+    s('Network Response', 'debug', ago(startMs - tookMs), {
+      tags: ['network'], network: true, requestID: id, callPhase: 'response',
+      metadata: {
+        status_code: status,
+        headers: { 'content-type': 'application/json' },
+        body,
+        request: { method, url },
+      },
+    }),
+  ]
+
+  return [
+    s('App launched', 'info', ago(300_000), { tags: ['lifecycle'] }),
+    ...call(randomUUID(), 'GET', 'https://api.shop.dev/v2/user/profile', 200, 280_000, 84,
+      { id: 'u_8812', name: 'Ada' }),
+    ...call(randomUUID(), 'GET', 'https://api.shop.dev/v2/products?page=1', 200, 240_000, 142,
+      { page: 1, products: 24 }),
+    s('Cart opened', 'info', ago(190_000), { tags: ['cart'] }),
+    ...call(LINKED_CART, 'GET', 'https://api.shop.dev/v2/cart', 200, 180_000, 118,
+      { items: 3, subtotal: 49 }),
+    s('Could not read GET /v2/cart', 'error', ago(180_000 - 121), {
+      tags: ['cart'],
+      requestID: LINKED_CART,
+      error: "type 'int' is not a subtype of type 'double' in type cast",
+      stackTrace: [
+        { index: 0, method: 'Cart.fromJson', path: 'lib/cart/cart.dart', line: 21, column: 28 },
+        { index: 1, method: 'CartRepository.load', path: 'lib/cart/cart_repository.dart', line: 34, column: 14 },
+      ],
+    }),
+  ]
+}
+
+const linkedLogSessions = () => ([
+  {
+    id: LINKED_SESSION,
+    installationID: randomUUID(),
+    deviceModel: 'Pixel 7',
+    osName: 'Android',
+    osVersion: '14',
+    appVersion: '3.11.2',
+    buildNumber: '418',
+    sdkVersion: '1.6.0',
+    startedAt: ago(330_000),
+    lastSeenAt: ago(50_000),
+  },
+])
+
 async function shoot(page, name) {
   // A settle beat: the charts animate in, and catching one mid-transition looks
   // like a rendering bug rather than a product.
@@ -364,6 +425,7 @@ async function main() {
   await shoot(page, 'devices')
 
   await shootLive(page, project)
+  await shootLinkedLog(page, project)
 
   await browser.close()
   console.log(`\nWritten to ${OUT}`)
@@ -424,6 +486,22 @@ async function shootLive(page, project) {
   } finally {
     dev.close()
   }
+}
+
+// A project of its own, so the list holds only this launch's three calls.
+async function shootLinkedLog(page, readme) {
+  // Project names are unique, and the API changes guide calls this one Shop.
+  await page.goto(`${BASE}/project/${readme.id}/settings`)
+  await page.fill('#general-form input[name="name"]', 'Shop README')
+  await page.click('#general-form button[type="submit"]')
+  await page.waitForSelector('#general-form:has-text("Saved")', { timeout: 5000 })
+
+  const project = await createProject(page, 'Shop')
+  await seedLogs(project.id, project.secret, linkedLogStory(), linkedLogSessions())
+
+  await page.goto(`${BASE}/project/${project.id}/network?rid=${LINKED_CART}`)
+  await page.waitForSelector('#network-detail [data-linked-logs]')
+  await shoot(page, 'network-linked-log')
 }
 
 main().catch(err => {

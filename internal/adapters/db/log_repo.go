@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -240,7 +241,6 @@ func (r *LogRepo) GetBySessionID(ctx context.Context, projectID, sessionID uuid.
 	return items, nil
 }
 
-// GetByRequestID returns all log phases for a network request (request/response/error).
 // GetByID is one log by primary key, scoped to the project in the WHERE so a
 // leaked id from another project reads as absent rather than as a row.
 func (r *LogRepo) GetByID(ctx context.Context, projectID, logID uuid.UUID) (*domain.Log, error) {
@@ -259,26 +259,49 @@ func (r *LogRepo) GetByID(ctx context.Context, projectID, logID uuid.UUID) (*dom
 	return LogModelToDomain(model), nil
 }
 
-func (r *LogRepo) GetByRequestID(ctx context.Context, projectID uuid.UUID, requestID uuid.UUID) ([]domain.Log, error) {
+// GetByRequestID returns the logs stored under one request id, oldest first:
+// every phase of the call, and the earliest linkedLimit of the logs the app
+// linked to it. linkedTotal counts all of the app's, listed or not.
+//
+// The app can put a request id on as many logs as it likes, one for each list
+// item its model rejected, so its logs are capped here rather than loaded whole
+// every time somebody opens the call. The phases are not capped: they are the
+// call.
+func (r *LogRepo) GetByRequestID(ctx context.Context, projectID, requestID uuid.UUID, linkedLimit int) ([]domain.Log, int, error) {
 	log := cslog.L(ctx)
-	log.WithField("request_id", requestID).Debug("DB: GetByRequestID")
+	// request_id is the HTTP request's id, on every line a request produces,
+	// so the call's id needs a key of its own.
+	log.WithField("call_request_id", requestID).Debug("DB: GetByRequestID")
 
-	db := getDB(ctx, r.db)
-	var models []LogModel
-	err := db.WithContext(ctx).
-		Where("project_id = ? AND request_id = ?", projectID, requestID).
-		Order("time_stamp ASC").
-		Find(&models).Error
-	if err != nil {
-		log.WithError(err).Error("DB: GetByRequestID failed")
-		return nil, err
+	db := getDB(ctx, r.db).WithContext(ctx)
+	byRequest := func() *gorm.DB {
+		return db.Model(&LogModel{}).Where("project_id = ? AND request_id = ?", projectID, requestID)
 	}
 
-	items := make([]domain.Log, 0, len(models))
-	for _, m := range models {
+	var phases, linked []LogModel
+	if err := byRequest().Where("is_network_call").Order("time_stamp ASC").Find(&phases).Error; err != nil {
+		log.WithError(err).Error("DB: GetByRequestID failed")
+		return nil, 0, err
+	}
+	if err := byRequest().Where("NOT is_network_call").Order("time_stamp ASC, id ASC").
+		Limit(linkedLimit).Find(&linked).Error; err != nil {
+		log.WithError(err).Error("DB: GetByRequestID failed")
+		return nil, 0, err
+	}
+	linkedTotal := int64(len(linked))
+	if len(linked) == linkedLimit {
+		if err := byRequest().Where("NOT is_network_call").Count(&linkedTotal).Error; err != nil {
+			log.WithError(err).Error("DB: GetByRequestID failed")
+			return nil, 0, err
+		}
+	}
+
+	items := make([]domain.Log, 0, len(phases)+len(linked))
+	for _, m := range append(phases, linked...) {
 		items = append(items, *LogModelToDomain(&m))
 	}
-	return items, nil
+	sort.SliceStable(items, func(i, j int) bool { return items[i].TimeStamp.Before(items[j].TimeStamp) })
+	return items, int(linkedTotal), nil
 }
 
 // GetStats returns hourly log count buckets for sparkline display.

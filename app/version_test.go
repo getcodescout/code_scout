@@ -57,6 +57,20 @@ func TestOnlyUnreleasedHasNoDate(t *testing.T) {
 	}
 }
 
+// A release heading is a Keep a Changelog link reference. Without its
+// definition at the foot of the file it renders as literal brackets rather
+// than as a link to the release.
+func TestEveryReleaseHeadingLinksToItsRelease(t *testing.T) {
+	changelog := readChangelog(t)
+	heading := regexp.MustCompile(`(?m)^## \[(\d+\.\d+\.\d+)\]`)
+	for _, m := range heading.FindAllStringSubmatch(changelog, -1) {
+		want := "[" + m[1] + "]: https://github.com/getcodescout/code_scout/releases/tag/v" + m[1]
+		if !strings.Contains(changelog, "\n"+want+"\n") {
+			t.Errorf("## [%s] has no link reference. Add this line at the foot of CHANGELOG.md:\n%s", m[1], want)
+		}
+	}
+}
+
 func readChangelog(t *testing.T) string {
 	t.Helper()
 	// The test binary runs in the package directory, and app/ is one below the

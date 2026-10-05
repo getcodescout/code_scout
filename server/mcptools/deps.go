@@ -32,7 +32,7 @@ type LogQuerier interface {
 	ListDevices(ctx context.Context, projectID uuid.UUID, limit int) ([]domain.Device, error)
 	GetDevice(ctx context.Context, projectID, installationID uuid.UUID) (*domain.Device, error)
 	ListNetworkCalls(ctx context.Context, projectID uuid.UUID, f domain.NetworkFilter, limit int) ([]domain.NetworkCall, error)
-	GetNetworkRequest(ctx context.Context, projectID uuid.UUID, requestID uuid.UUID) ([]domain.Log, error)
+	GetNetworkRequest(ctx context.Context, projectID, requestID uuid.UUID, linkedLimit int) ([]domain.Log, int, error)
 	GetProjectOverview(ctx context.Context, projectID uuid.UUID, window domain.OverviewWindow) (*domain.ProjectOverview, error)
 }
 

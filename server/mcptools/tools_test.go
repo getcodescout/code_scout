@@ -20,6 +20,7 @@ import (
 type fakeLogs struct {
 	listLogs   func(query string, cursor *domain.LogCursor, limit int) (*domain.LogListResult, error)
 	getLog     func(logID uuid.UUID) (*domain.Log, error)
+	byRequest  func(requestID uuid.UUID) ([]domain.Log, error)
 	networkErr error
 }
 
@@ -61,8 +62,29 @@ func (f *fakeLogs) GetDevice(context.Context, uuid.UUID, uuid.UUID) (*domain.Dev
 func (f *fakeLogs) ListNetworkCalls(context.Context, uuid.UUID, domain.NetworkFilter, int) ([]domain.NetworkCall, error) {
 	return nil, f.networkErr
 }
-func (f *fakeLogs) GetNetworkRequest(context.Context, uuid.UUID, uuid.UUID) ([]domain.Log, error) {
-	return nil, nil
+
+// GetNetworkRequest keeps the repository's contract over whatever byRequest
+// returns: every phase, the earliest linkedLimit of the app's own logs, and a
+// count of all of them.
+func (f *fakeLogs) GetNetworkRequest(_ context.Context, _, requestID uuid.UUID, linkedLimit int) ([]domain.Log, int, error) {
+	if f.byRequest == nil {
+		return nil, 0, nil
+	}
+	all, err := f.byRequest(requestID)
+	if err != nil {
+		return nil, 0, err
+	}
+	var logs []domain.Log
+	linked := 0
+	for _, l := range all {
+		if !l.IsNetworkCall {
+			if linked++; linked > linkedLimit {
+				continue
+			}
+		}
+		logs = append(logs, l)
+	}
+	return logs, linked, nil
 }
 func (f *fakeLogs) GetProjectOverview(_ context.Context, _ uuid.UUID, w domain.OverviewWindow) (*domain.ProjectOverview, error) {
 	return &domain.ProjectOverview{Window: w}, nil

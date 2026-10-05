@@ -11,7 +11,10 @@ type NetworkDetailData struct {
 	ProjectID uuid.UUID
 	Project   *domain.Project
 	RequestID uuid.UUID
-	Logs      []domain.Log
+	// Logs is every phase of the call and the first LinkedLogLimit of the
+	// app's own logs about it. LinkedTotal counts all of the app's.
+	Logs        []domain.Log
+	LinkedTotal int
 }
 
 func (d NetworkDetailData) shell() ProjectShellData {
@@ -21,6 +24,7 @@ func (d NetworkDetailData) shell() ProjectShellData {
 
 templ NetworkDetailPage(data NetworkDetailData) {
 	@ProjectShell(data.shell()) {
+				{{ phases, linked := domain.SplitCallLogs(data.Logs) }}
 				<!-- Back to the list this request came from -->
 				<a
 					href={ templ.SafeURL(fmt.Sprintf("/project/%s/logs", data.ProjectID)) }
@@ -32,31 +36,49 @@ templ NetworkDetailPage(data NetworkDetailData) {
 
 				<!-- Request Header -->
 				<div class="mt-2 mb-6">
-					<h1 class="text-xl font-bold text-white">Network Request</h1>
-					<p class="text-cs-muted text-sm font-mono mt-1">{ data.RequestID.String() }</p>
+					if len(phases) == 0 && len(linked) > 0 {
+						<h1 class="text-xl font-bold text-white">Call not captured</h1>
+						<p class="text-cs-muted text-sm font-mono mt-1">request { data.RequestID.String() }</p>
+					} else {
+						<h1 class="text-xl font-bold text-white">Network Request</h1>
+						<p class="text-cs-muted text-sm font-mono mt-1">{ data.RequestID.String() }</p>
+					}
 				</div>
 
-				if len(data.Logs) > 0 {
+				if len(linked) > 0 {
+					<section data-linked-logs aria-label="Logged by the app" class="mb-6 rounded-lg border border-cs-border px-4 pb-3 pt-3">
+						<div class="flex items-baseline justify-between gap-3">
+							<h2 class="flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wider text-cs-muted">
+								Logged by the app
+								@linkedLogsCount(len(linked), data.LinkedTotal)
+							</h2>
+							@requestLogsLink(data.ProjectID, data.RequestID)
+						</div>
+						@linkedLogRows(linked)
+					</section>
+				}
+
+				if len(phases) == 0 && len(linked) > 0 {
+					<p data-call-not-captured class="rounded-lg border border-cs-border p-5 text-sm leading-relaxed text-cs-muted">{ domain.CallNotCaptured }</p>
+				} else if len(phases) > 0 {
 					<!-- Tab Bar. No card of its own: the shell's content area is
 					     already one, and a second would frame the whole page twice. -->
 					<div id="phase-tabs">
 						<div class="flex border-b border-cs-border">
-							for i, log := range data.Logs {
-								if log.CallPhase != nil {
-									<button
-										class={ "px-5 py-3 text-sm font-semibold transition-colors border-b-2",
-											tabActiveClass(i == 0) }
-										data-target={ fmt.Sprintf("tab-%d", i) }
-										onclick="switchTab(this, this.getAttribute('data-target'))"
-									>
-										{ phaseLabel(log.CallPhase) }
-									</button>
-								}
+							for i, log := range phases {
+								<button
+									class={ "px-5 py-3 text-sm font-semibold transition-colors border-b-2",
+										tabActiveClass(i == 0) }
+									data-target={ fmt.Sprintf("tab-%d", i) }
+									onclick="switchTab(this, this.getAttribute('data-target'))"
+								>
+									{ phaseLabel(log.CallPhase) }
+								</button>
 							}
 						</div>
 
 						<!-- Tab Panels -->
-						for i, log := range data.Logs {
+						for i, log := range phases {
 							<div
 								id={ fmt.Sprintf("tab-%d", i) }
 								class={ "p-5", tabVisibility(i == 0) }

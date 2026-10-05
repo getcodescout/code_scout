@@ -321,10 +321,11 @@ func (h *LogViewerHandler) networkView(r *http.Request, projectID uuid.UUID, fil
 	// empty on arrival.
 	selected := selectedCall(calls, r.URL.Query())
 	if selected == nil {
+		h.uncapturedCall(r, projectID, &data)
 		return data, nil
 	}
 
-	phases, err := h.querySvc.GetNetworkRequest(ctx, projectID, selected.RequestID)
+	phases, linkedTotal, err := h.querySvc.GetNetworkRequest(ctx, projectID, selected.RequestID, view.LinkedLogLimit)
 	if err != nil {
 		cslog.L(ctx).WithError(err).Error("Failed to load network phases")
 		return data, nil
@@ -332,6 +333,7 @@ func (h *LogViewerHandler) networkView(r *http.Request, projectID uuid.UUID, fil
 
 	data.Selected = selected
 	data.Phases = phases
+	data.LinkedTotal = linkedTotal
 	// `phase`, not `tab`: the session screen spends `tab` on Logs and Network,
 	// and this pane has to work there too.
 	data.Phase = r.URL.Query().Get("phase")
@@ -339,6 +341,45 @@ func (h *LogViewerHandler) networkView(r *http.Request, projectID uuid.UUID, fil
 		data.Phase = view.DefaultTab(phases)
 	}
 	return data, nil
+}
+
+// uncapturedCall answers an rid with no row in the list whose only logs are
+// the app's own: the SDK dropped its phases at the level gate, or retention
+// removed them. An rid the list left out for any other reason, a filter or the
+// cap, still selects nothing.
+//
+// A launch is a filter too. Its screen shows a call that was not captured only
+// when the app logged about it in that launch, or the pane would list another
+// launch's logs under this one's header.
+func (h *LogViewerHandler) uncapturedCall(r *http.Request, projectID uuid.UUID, data *view.NetworkData) {
+	rid, err := uuid.Parse(r.URL.Query().Get("rid"))
+	if err != nil {
+		return
+	}
+	logs, linkedTotal, err := h.querySvc.GetNetworkRequest(r.Context(), projectID, rid, view.LinkedLogLimit)
+	if err != nil {
+		cslog.L(r.Context()).WithError(err).Error("Failed to load the logs for an unlisted request")
+		return
+	}
+	phases, linked := domain.SplitCallLogs(logs)
+	if len(phases) > 0 || linkedTotal == 0 {
+		return
+	}
+	if sid := data.Filter.SessionID; sid != nil && !anyInLaunch(linked, *sid) {
+		return
+	}
+	data.Uncaptured = &rid
+	data.Phases = logs
+	data.LinkedTotal = linkedTotal
+}
+
+func anyInLaunch(logs []domain.Log, sessionID uuid.UUID) bool {
+	for _, l := range logs {
+		if l.SessionID == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 // selectedCall reads three different intents out of one parameter. No rid at
@@ -602,7 +643,7 @@ func (h *LogViewerHandler) NetworkDetail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	logs, err := h.querySvc.GetNetworkRequest(ctx, projectID, requestID)
+	logs, linkedTotal, err := h.querySvc.GetNetworkRequest(ctx, projectID, requestID, view.LinkedLogLimit)
 	if err != nil {
 		cslog.L(ctx).WithError(err).Error("Failed to get network request")
 		http.Error(w, "Failed to load request", http.StatusInternalServerError)
@@ -610,11 +651,12 @@ func (h *LogViewerHandler) NetworkDetail(w http.ResponseWriter, r *http.Request)
 	}
 
 	data := view.NetworkDetailData{
-		User:      middleware.UserFrom(ctx),
-		Project:   h.project(ctx, projectID),
-		ProjectID: projectID,
-		RequestID: requestID,
-		Logs:      logs,
+		User:        middleware.UserFrom(ctx),
+		Project:     h.project(ctx, projectID),
+		ProjectID:   projectID,
+		RequestID:   requestID,
+		Logs:        logs,
+		LinkedTotal: linkedTotal,
 	}
 	c := view.NetworkDetailPage(data)
 	c.Render(ctx, w)

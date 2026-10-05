@@ -127,7 +127,7 @@ func TestDurationLabel(t *testing.T) {
 func TestAvailableTabsAndDefault(t *testing.T) {
 	phase := func(p string, meta string) domain.Log {
 		cp := domain.CallPhase(p)
-		l := domain.Log{CallPhase: &cp}
+		l := domain.Log{IsNetworkCall: true, CallPhase: &cp}
 		if meta != "" {
 			raw := json.RawMessage(meta)
 			l.Metadata = &raw
@@ -184,6 +184,28 @@ func TestAvailableTabsAndDefault(t *testing.T) {
 	}
 	if !TabAvailable(get, "headers") {
 		t.Error("headers should always be available once anything was recorded")
+	}
+
+	// The app's own log about the call is not a phase, even one that names a
+	// phase: it is drawn above the tabs, and drawing it as a tab too would put
+	// one log on screen twice and turn a 200 into a call with an Error tab.
+	app := phase("error", `{"type":"not a phase"}`)
+	app.IsNetworkCall = false
+	withApp := append(append([]domain.Log{}, get...), app)
+	if got := AvailableTabs(withApp); !reflect.DeepEqual(got, []string{"headers", "response"}) {
+		t.Errorf("an app log changed the tabs: %v", got)
+	}
+	if got := DefaultTab(withApp); got != "response" {
+		t.Errorf("an app log changed the default tab: %q", got)
+	}
+	// And with nothing but the app's log there is no call to tab through.
+	if got := AvailableTabs([]domain.Log{app}); got != nil {
+		t.Errorf("an app log alone offered tabs: %v", got)
+	}
+	// The Headers tab asks for the error phase itself, to say why a request
+	// has no response. The app's log is not that phase.
+	if got := phaseLog(withApp, "error"); got != nil {
+		t.Errorf("an app log was read as the call's error phase: %+v", got)
 	}
 }
 
@@ -354,7 +376,7 @@ func TestDetailPaneAlwaysCarriesItsTargetID(t *testing.T) {
 	filled := render(t, NetworkDetailPane(NetworkData{
 		ProjectID: uuid.New(),
 		Selected:  &selected,
-		Phases:    []domain.Log{{CallPhase: &phase, Metadata: &body}},
+		Phases:    []domain.Log{{IsNetworkCall: true, CallPhase: &phase, Metadata: &body}},
 		Phase:     "response",
 	}))
 	if !contains(filled, `id="network-detail"`) {
@@ -373,7 +395,7 @@ func TestRedactedHeaderRendersAsRedaction(t *testing.T) {
 	out := render(t, NetworkDetailPane(NetworkData{
 		ProjectID: uuid.New(),
 		Selected:  &selected,
-		Phases:    []domain.Log{{CallPhase: &phase, Metadata: &meta}},
+		Phases:    []domain.Log{{IsNetworkCall: true, CallPhase: &phase, Metadata: &meta}},
 		Phase:     "headers",
 	}))
 
